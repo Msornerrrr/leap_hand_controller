@@ -17,6 +17,92 @@ This repository contains two ROS packages for working with the LEAP Hand: `leap_
 
 ---
 
+## Docker Setup (Recommended)
+
+This project can be run entirely inside Docker, which avoids needing to install ROS Noetic natively.
+
+### Prerequisites
+
+- [Docker](https://docs.docker.com/engine/install/) and [Docker Compose](https://docs.docker.com/compose/install/) installed on the host
+- LEAP Hand connected via USB
+
+### 1. Build the Docker Image
+
+```bash
+cd leap_hand_controller
+docker compose build
+```
+
+### 2. Find Your Serial Device
+
+Plug in the LEAP Hand USB cable and find the device path:
+
+```bash
+ls /dev/serial/by-id/
+```
+
+You should see something like `usb-FTDI_USB__-__Serial_Converter_FT7W91VW-if00-port0`. Note this path.
+
+If your device is **not** symlinked to `/dev/ttyDXL`, create a udev rule so it persists across reboots:
+
+```bash
+# Replace the idVendor/idProduct with your device's values (use lsusb to find them)
+echo 'SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6014", SYMLINK+="ttyDXL"' | sudo tee /etc/udev/rules.d/99-leap-hand.rules
+sudo udevadm control --reload-rules && sudo udevadm trigger
+```
+
+Alternatively, update the serial port path directly in `leap_hand/scripts/leap_hand_utils/dynamixel_client.py` to match your `/dev/serial/by-id/...` path.
+
+### 3. Launch the Controller
+
+```bash
+docker compose up
+```
+
+This starts `roslaunch leap_hand leap.launch` inside the container with USB device passthrough.
+
+### 4. Launch with Custom Parameters
+
+Override the default command to pass custom launch arguments:
+
+```bash
+docker compose run --rm leap_hand roslaunch leap_hand leap.launch \
+    urdf_file:=leap_left.urdf kP:=600.0 kD:=150.0 curr_lim:=500.0
+```
+
+### 5. Open a Shell Inside the Container
+
+To interact with the running ROS environment (e.g., call services, publish topics):
+
+```bash
+# If the container is already running:
+docker exec -it leap_hand_controller bash
+
+# Inside the container, ROS is already sourced:
+rosservice call /leap_pos_vel
+rostopic echo /leap_hand_state
+```
+
+Or start a fresh container with a shell:
+
+```bash
+docker compose run --rm leap_hand bash
+```
+
+### 6. Visualization (RViz)
+
+To use RViz from within the container, you need to forward X11 display. Add these to your `docker compose run` command:
+
+```bash
+xhost +local:docker
+docker compose run --rm \
+    -e DISPLAY=$DISPLAY \
+    -v /tmp/.X11-unix:/tmp/.X11-unix \
+    leap_hand roslaunch leap_hand leap.launch show_rviz:=true
+```
+
+---
+
 ## LEAP Description Package
 
 The `leap_description` package provides URDF models for the LEAP Hand, enabling easy integration into ROS's `robot_description` parameter for simulation and visualization.

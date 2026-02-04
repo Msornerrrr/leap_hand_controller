@@ -1,0 +1,21 @@
+version: "3.8"
+
+services:
+  leap_hand:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: leap_hand_controller
+    network_mode: host
+    privileged: true
+    stdin_open: true
+    tty: true
+    # Pass through all USB devices so the Dynamixel U2D2 is accessible
+    volumes:
+      - /dev:/dev
+    # Pass through ROS environment from the host
+    environment:
+      - ROS_MASTER_URI
+      - ROS_HOSTNAME
+    # Default command: launch the leap hand controller
+    command: roslaunch leap_hand leap.launch
