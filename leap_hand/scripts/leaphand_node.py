@@ -50,15 +50,19 @@ class LeapNode:
         self.motors = motors = [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]
         self.joint_names = [f"joint_{i}" for i in self.motors]
 
-        ports = ["/dev/ttyDXL"]
-        for port in ports:
-            try:
-                self.dxl_client = DynamixelClient(motors, port, 4000000)
-                self.dxl_client.connect()
-                print(f"Connected successfully to {port}")
-                break  # Exit loop if connection succeeds
-            except Exception as e:
-                print(f"Failed to connect to {port}: {e}")
+        ports = {'right': "/dev/ttyLEAP_RIGHT", 'left': "/dev/ttyLEAP_LEFT"}
+        port = ports.get(self.hand)
+        if port is None:
+            rospy.logfatal(f"Invalid hand parameter: '{self.hand}'. Must be 'left' or 'right'.")
+            sys.exit(1)
+
+        try:
+            self.dxl_client = DynamixelClient(motors, port, 4000000)
+            self.dxl_client.connect()
+            rospy.loginfo(f"Connected to {self.hand} hand on {port}")
+        except Exception as e:
+            rospy.logfatal(f"Failed to connect to {port}: {e}")
+            sys.exit(1)
         
         # Enables position-current control mode, it commands a position and then caps the current so the motors don't overload
         self.dxl_client.sync_write(motors, np.ones(len(motors))*5, 11, 1)
