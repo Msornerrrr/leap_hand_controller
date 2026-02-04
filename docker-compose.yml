@@ -13,9 +13,12 @@ services:
     # Pass through all USB devices so the Dynamixel U2D2 is accessible
     volumes:
       - /dev:/dev
+      # Mount source code so local edits take effect without rebuilding
+      - ./leap_hand:/catkin_ws/src/leap_hand
+      - ./leap_description:/catkin_ws/src/leap_description
     # Pass through ROS environment from the host
     environment:
       - ROS_MASTER_URI
       - ROS_HOSTNAME
     # Default command: launch the leap hand controller
-    command: roslaunch leap_hand leap.launch
+    command: roslaunch leap_hand leap.launch hand:=left

@@ -67,7 +67,7 @@ Override the default command to pass custom launch arguments:
 
 ```bash
 docker compose run --rm leap_hand roslaunch leap_hand leap.launch \
-    urdf_file:=leap_left.urdf kP:=600.0 kD:=150.0 curr_lim:=500.0
+  hand:=left kP:=600.0 kI:=0.0 kD:=150.0 curr_lim:=500.0
 ```
 
 ### 5. Open a Shell Inside the Container
