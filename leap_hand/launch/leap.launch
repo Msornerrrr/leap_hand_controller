@@ -1,6 +1,7 @@
 <launch>
     <!-- Define arguments -->
-    <arg name="urdf_file" default="leap_right.urdf" />
+    <arg name="hand" default="right" doc="Hand type: 'left' or 'right'" />
+    <arg name="urdf_file" default="leap_$(arg hand).urdf" />
     <!-- <arg name="frequency" default="60.0" doc="Frequency (Hz) for publishing joint states" /> -->
     <arg name="kP" default="800.0" />
     <arg name="kI" default="0.0" />
@@ -17,6 +18,7 @@
         <param name="kI" value="$(arg kI)"/>
         <param name="kD" value="$(arg kD)"/>
         <param name="curr_lim" value="$(arg curr_lim)"/>
+        <param name="hand" value="$(arg hand)"/>
     </node>
 
     <!-- Start the state publisher node to publish joint states to /leap_hand_state -->

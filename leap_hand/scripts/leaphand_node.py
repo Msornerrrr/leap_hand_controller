@@ -31,6 +31,7 @@ class LeapNode:
         self.kI = float(rospy.get_param('/leaphand_node/kI', 0.0))
         self.kD = float(rospy.get_param('/leaphand_node/kD', 200.0))
         self.curr_lim = float(rospy.get_param('/leaphand_node/curr_lim', 550.0)) #don't go past 600ma on this, or it'll overcurrent sometimes for regular, 350ma for lite.
+        self.hand = rospy.get_param('/leaphand_node/hand', 'right')
         self.prev_pos = self.pos = self.curr_pos = np.zeros(16)
         self.frequency = frequency
         self.lock = threading.Lock()
@@ -77,7 +78,7 @@ class LeapNode:
         self.dxl_client.sync_write(motors, np.ones(len(motors)) * self.curr_lim, 102, 2)
 
         # Get Min and max
-        self.min, self.max = lhu.LEAP_limits()
+        self.min, self.max = lhu.LEAP_limits(self.hand)
         try: 
             #Move motors to 0 position
             self.set_initial_position(self.curr_pos)
