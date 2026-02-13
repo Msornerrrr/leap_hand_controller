@@ -5,6 +5,7 @@ import rospkg
 import os
 import sys
 import time
+from typing import Optional
 
 import threading
 from sensor_msgs.msg import JointState
@@ -13,6 +14,20 @@ from std_msgs.msg import String
 from leap_hand_utils.dynamixel_client import *
 import leap_hand_utils.leap_hand_utils as lhu
 from leap_hand.srv import *
+
+
+def get_ros_loop_rate_str(
+    start_time: rospy.Time,
+    before_sleep_time: rospy.Time,
+    after_sleep_time: rospy.Time,
+    node_name: Optional[str] = None,
+) -> str:
+    max_rate_dt = (before_sleep_time - start_time).to_sec()
+    max_rate_hz = 1 / max_rate_dt
+    actual_rate_dt = (after_sleep_time - start_time).to_sec()
+    actual_rate_hz = 1 / actual_rate_dt
+    loop_rate_str = f"Max rate: {np.round(max_rate_hz, 1)} Hz ({np.round(max_rate_dt * 1000, 1)} ms), Actual rate: {np.round(actual_rate_hz, 1)} Hz"
+    return f"{node_name} {loop_rate_str}" if node_name is not None else loop_rate_str
 
 
 #LEAP hand conventions:
@@ -31,12 +46,14 @@ class LeapNode:
         self.kI = float(rospy.get_param('/leaphand_node/kI', 0.0))
         self.kD = float(rospy.get_param('/leaphand_node/kD', 200.0))
         self.curr_lim = float(rospy.get_param('/leaphand_node/curr_lim', 550.0)) #don't go past 600ma on this, or it'll overcurrent sometimes for regular, 350ma for lite.
+        self.max_delta_q = float(rospy.get_param('/leaphand_node/max_delta_q', 0.15)) # Max joint position change per step (radians). Set to 0 to disable.
         self.hand = rospy.get_param('/leaphand_node/hand', 'right')
         self.prev_pos = self.pos = self.curr_pos = np.zeros(16)
         self.frequency = frequency
         self.lock = threading.Lock()
 
         # Internal state variables
+        self.cmd_pose = np.zeros(16)  # latest commanded pose (pre-offset), updated by subscriber
         self.latest_pos = np.zeros(16)
         self.latest_vel = np.zeros(16)
         self.latest_eff = np.zeros(16)
@@ -107,53 +124,60 @@ class LeapNode:
             # Publish state of hand every time you fullfill a service
             self.state_pub = rospy.Publisher('/leap_hand_state', JointState, queue_size=10)
 
-            self.read_thread = threading.Thread(target=self.read_loop)
-            self.read_thread.daemon = True  
-            self.read_thread.start()
+            self.control_thread = threading.Thread(target=self.control_loop)
+            self.control_thread.daemon = True
+            self.control_thread.start()
             
             while not rospy.is_shutdown():
                 rospy.spin()
         finally:
             self.dxl_client.set_torque_enabled(motors, False)
 
-    def read_loop(self):
-        """Runs at 60Hz to read hardware and send commands"""
-        read_rate = rospy.Rate(self.frequency)
+    def control_loop(self):
+        """Runs at 60Hz: read state, clamp command, write to hardware."""
+        rate = rospy.Rate(self.frequency)
         while not rospy.is_shutdown():
+            start_time = rospy.Time.now()
             try:
+                # 1. Read current joint state from hardware
+                pos, vel = self.dxl_client.read_pos_vel()
+                self.latest_pos = pos - np.pi
+                self.latest_vel = vel
+
+                # 2. Grab the latest commanded pose
                 with self.lock:
-                    # Read hardware
-                    pos, vel = self.dxl_client.read_pos_vel() #! R event
-                    self.latest_pos = pos - np.pi
-                    self.latest_vel = vel
+                    pose = self.cmd_pose.copy()
+
+                # 3. Apply delta clamping relative to actual joint state
+                if self.max_delta_q > 0:
+                    delta = np.clip(pose - self.latest_pos, -self.max_delta_q, self.max_delta_q)
+                    pose = self.latest_pos + delta
+
+                # 4. Write to hardware (with pi offset for LEAP convention)
+                self.prev_pos = self.curr_pos
+                self.curr_pos = pose + np.pi
+                self.dxl_client.write_desired_pos(self.motors, self.curr_pos)
             except Exception as e:
                 rospy.logerr(f"Hardware communication error: {e}")
-            read_rate.sleep()
+            before_sleep_time = rospy.Time.now()
+            rate.sleep()
+            after_sleep_time = rospy.Time.now()
+            rospy.loginfo_throttle(5.0, get_ros_loop_rate_str(start_time, before_sleep_time, after_sleep_time, "control_loop"))
             
 
-    # Receive LEAP pose and directly control the robot.  Fully open here is 180 and increases in this value closes the hand.
     def _receive_pose(self, pose):
-        # Clip pose with limits (Current control does not enforce them)
+        """Receive commanded pose and store it. The control_loop handles writing."""
         pose = np.array(pose.position)
         pose = np.clip(pose, self.min, self.max)
-        self.prev_pos = self.curr_pos
-        
-        # Add offset so it is alligned with the simulation LeapHand
-        self.curr_pos = pose + np.pi
         with self.lock:
-            self.dxl_client.write_desired_pos(self.motors, self.curr_pos)
+            self.cmd_pose = pose
 
 
     def set_initial_position(self, pose):
-        # Clip pose with limits (Current control does not enforce them)
-        pose = np.clip(pose, self.min, self.max)
-        self.prev_pos = self.curr_pos
-        
-        # Add offset so it is alligned with the simulation LeapHand
-        self.curr_pos = pose + np.pi
-        with self.lock:
-            self.dxl_client.write_desired_pos(self.motors, self.curr_pos)
-
+        """Set initial position. Direct write since control_loop hasn't started yet."""
+        self.cmd_pose = np.clip(pose, self.min, self.max)
+        self.curr_pos = self.cmd_pose + np.pi
+        self.dxl_client.write_desired_pos(self.motors, self.curr_pos)
 
 
     #Service that reads and returns the pos of the robot in regular LEAP Embodiment scaling.
@@ -201,7 +225,7 @@ def make_args():
     parser.add_argument(
         "--frequency",
         type=float,
-        default=60.0, 
+        default=80.0, 
         help="Frequency for Reading the Motor position and velocity",
     )
 
