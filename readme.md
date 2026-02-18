@@ -41,17 +41,21 @@ Plug in the LEAP Hand USB cable and find the device path:
 ls /dev/serial/by-id/
 ```
 
-You should see something like `usb-FTDI_USB__-__Serial_Converter_FT7W91VW-if00-port0`. Note this path.
+You should see something like `usb-FTDI_USB__-__Serial_Converter_FT7W91VW-if00-port0`. Note this path for each hand.
 
-If your device is **not** symlinked to `/dev/ttyDXL`, create a udev rule so it persists across reboots:
+The controller expects devices symlinked to `/dev/ttyLEAP_RIGHT` and `/dev/ttyLEAP_LEFT`. Create udev rules so the symlinks persist across reboots:
 
 ```bash
-# Replace the idVendor/idProduct with your device's values (use lsusb to find them)
-echo 'SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6014", SYMLINK+="ttyDXL"' | sudo tee /etc/udev/rules.d/99-leap-hand.rules
+# Find each hand's USB serial number by plugging in one at a time and running:
+udevadm info -a /dev/serial/by-id/<your-device-id> | grep '{serial}'
+
+# Then create a rule per hand, substituting the actual serial numbers:
+echo 'SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6014", ATTRS{serial}=="FT7W91VW", SYMLINK+="ttyLEAP_RIGHT"' | sudo tee /etc/udev/rules.d/99-leap-hand.rules
+echo 'SUBSYSTEM=="tty", ATTRS{idVendor}=="0403", ATTRS{idProduct}=="6014", ATTRS{serial}=="FT950ZLA", SYMLINK+="ttyLEAP_LEFT"' | sudo tee -a /etc/udev/rules.d/99-leap-hand.rules
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-Alternatively, update the serial port path directly in `leap_hand/scripts/leap_hand_utils/dynamixel_client.py` to match your `/dev/serial/by-id/...` path.
+Alternatively, update the port mapping directly in `leap_hand/scripts/leaphand_node.py` to match your `/dev/serial/by-id/...` paths.
 
 ### 3. Launch the Controller
 
@@ -66,8 +70,13 @@ This starts `roslaunch leap_hand leap.launch` inside the container with USB devi
 Override the default command to pass custom launch arguments:
 
 ```bash
+# Right hand (default)
 docker compose run --rm leap_hand roslaunch leap_hand leap.launch \
-  hand:=left kP:=600.0 kI:=0.0 kD:=150.0 curr_lim:=500.0
+  hand:=right kP:=800.0 kI:=0.0 kD:=200.0 curr_lim:=550.0
+
+# Left hand
+docker compose run --rm leap_hand roslaunch leap_hand leap.launch \
+  hand:=left kP:=800.0 kI:=0.0 kD:=200.0 curr_lim:=550.0
 ```
 
 ### 5. Open a Shell Inside the Container
