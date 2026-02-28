@@ -1,39 +1,47 @@
 <launch>
     <!-- Define arguments -->
+    <arg name="ns" default="/" doc="Namespace for LEAP nodes. Keep '/' for root." />
     <arg name="hand" default="right" doc="Hand type: 'left' or 'right'" />
     <arg name="urdf_file" default="leap_$(arg hand).urdf" />
-    <!-- <arg name="frequency" default="60.0" doc="Frequency (Hz) for publishing joint states" /> -->
+    <arg name="frequency" default="80.0" doc="Control loop frequency (Hz) for LEAP node" />
     <arg name="kP" default="800.0" />
     <arg name="kI" default="0.0" />
     <arg name="kD" default="200.0" />
     <arg name="curr_lim" default="550.0" />
+    <arg name="cmd_topic" default="cmd_leap" />
+    <arg name="state_topic" default="state" />
     <arg name="show_rviz" default="false" />
 
-    <!-- Load the URDF into the robot_description parameter -->
-    <param name="robot_description" textfile="$(find leap_description)/robots/$(arg urdf_file)" />
+    <group ns="$(arg ns)">
+        <!-- Load the URDF into the robot_description parameter -->
+        <param name="robot_description" textfile="$(find leap_description)/robots/$(arg urdf_file)" />
 
-    <!-- Start the LEAP hand control node -->
-    <node name="leaphand_node" pkg="leap_hand" type="leaphand_node.py" output="screen" required="true">
-        <param name="kP" value="$(arg kP)"/>
-        <param name="kI" value="$(arg kI)"/>
-        <param name="kD" value="$(arg kD)"/>
-        <param name="curr_lim" value="$(arg curr_lim)"/>
-        <param name="hand" value="$(arg hand)"/>
-    </node>
+        <!-- Start the LEAP hand control node -->
+        <node name="leaphand_node" pkg="leap_hand" type="leaphand_node.py" output="screen" required="true"
+              args="--frequency $(arg frequency)">
+            <param name="kP" value="$(arg kP)"/>
+            <param name="kI" value="$(arg kI)"/>
+            <param name="kD" value="$(arg kD)"/>
+            <param name="curr_lim" value="$(arg curr_lim)"/>
+            <param name="hand" value="$(arg hand)"/>
+            <param name="cmd_topic" value="$(arg cmd_topic)"/>
+            <param name="state_topic" value="$(arg state_topic)"/>
+        </node>
 
-    <!-- Start the state publisher node to publish joint states to /leap_hand_state -->
-    <!-- <node name="leap_hand_state_publisher" pkg="leap_hand" type="leap_hand_state_publisher.py" output="screen">
-        <param name="reading_frequency" value="$(arg frequency)" />
-    </node> -->
+        <!-- Start the state publisher node to publish joint states -->
+        <!-- <node name="leap_hand_state_publisher" pkg="leap_hand" type="leap_hand_state_publisher.py" output="screen">
+            <param name="reading_frequency" value="$(arg frequency)" />
+        </node> -->
 
-    <!-- Start robot_state_publisher to publish TF transforms based on joint states -->
-    <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">
-        <param name="publish_frequency" value="60.0" />
-        <remap from="/joint_states" to="/leap_hand_state" />
-    </node>
+        <!-- Start robot_state_publisher to publish TF transforms based on joint states -->
+        <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">
+            <param name="publish_frequency" value="60.0" />
+            <remap from="joint_states" to="$(arg state_topic)" />
+        </node>
 
-    <!-- Start RViz with a configuration file for visualization -->
-    <group if="$(arg show_rviz)">
-        <node name="rviz" pkg="rviz" type="rviz" args="-d $(find leap_hand)/config/rviz.rviz" output="screen" />
+        <!-- Start RViz with a configuration file for visualization -->
+        <group if="$(arg show_rviz)">
+            <node name="rviz" pkg="rviz" type="rviz" args="-d $(find leap_hand)/config/rviz.rviz" output="screen" />
+        </group>
     </group>
 </launch>

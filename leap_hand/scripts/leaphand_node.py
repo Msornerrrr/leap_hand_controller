@@ -42,12 +42,18 @@ def get_ros_loop_rate_str(
 class LeapNode:
     def __init__(self, frequency ):
         ####Some parameters to control the hand #! Reduce PD values for less jittery control, Increase for more strength
-        self.kP = float(rospy.get_param('/leaphand_node/kP', 800.0)) 
-        self.kI = float(rospy.get_param('/leaphand_node/kI', 0.0))
-        self.kD = float(rospy.get_param('/leaphand_node/kD', 200.0))
-        self.curr_lim = float(rospy.get_param('/leaphand_node/curr_lim', 550.0)) #don't go past 600ma on this, or it'll overcurrent sometimes for regular, 350ma for lite.
-        self.max_delta_q = float(rospy.get_param('/leaphand_node/max_delta_q', 0.15)) # Max joint position change per step (radians). Set to 0 to disable.
-        self.hand = rospy.get_param('/leaphand_node/hand', 'right')
+        self.kP = float(rospy.get_param('~kP', 800.0)) 
+        self.kI = float(rospy.get_param('~kI', 0.0))
+        self.kD = float(rospy.get_param('~kD', 200.0))
+        self.curr_lim = float(rospy.get_param('~curr_lim', 550.0)) #don't go past 600ma on this, or it'll overcurrent sometimes for regular, 350ma for lite.
+        self.max_delta_q = float(rospy.get_param('~max_delta_q', 0.15)) # Max joint position change per step (radians). Set to 0 to disable.
+        self.hand = rospy.get_param('~hand', 'right')
+        self.cmd_topic = str(rospy.get_param("~cmd_topic", "cmd_leap")).strip()
+        self.state_topic = str(rospy.get_param("~state_topic", "state")).strip()
+        if not self.cmd_topic:
+            self.cmd_topic = "cmd_leap"
+        if not self.state_topic:
+            self.state_topic = "state"
         self.prev_pos = self.pos = self.curr_pos = np.zeros(16)
         self.frequency = frequency
         self.lock = threading.Lock()
@@ -59,7 +65,7 @@ class LeapNode:
         self.latest_eff = np.zeros(16)
 
         #subscribes to a variety of sources that can command the hand, and creates services that can give information about the hand out
-        rospy.Subscriber("/leaphand_node/cmd_leap", JointState, self._receive_pose, queue_size=1)
+        rospy.Subscriber(self.cmd_topic, JointState, self._receive_pose, queue_size=1)
 
         #You can put the correct port here or have the node auto-search for a hand at the first 3 ports.
         # For example ls /dev/serial/by-id/* to find your LEAP Hand. Then use the result.  
@@ -111,7 +117,7 @@ class LeapNode:
             self.latest_vel = output[1]
 
             # Setup timer for periodic publishing (60 Hz default)
-            self.publish_rate = float(rospy.get_param('/leaphand_node/publish_rate', self.frequency))
+            self.publish_rate = float(rospy.get_param('~publish_rate', self.frequency))
             self.publish_timer = rospy.Timer(rospy.Duration(1.0 / self.publish_rate), self.publish_state)
 
             # Initialize services after everything is ready
@@ -122,7 +128,7 @@ class LeapNode:
             # rospy.Service('leap_pos_vel_eff', leap_pos_vel_eff, self.pos_vel_eff_srv)
 
             # Publish state of hand every time you fullfill a service
-            self.state_pub = rospy.Publisher('/leap_hand_state', JointState, queue_size=10)
+            self.state_pub = rospy.Publisher(self.state_topic, JointState, queue_size=10)
 
             self.control_thread = threading.Thread(target=self.control_loop)
             self.control_thread.daemon = True
