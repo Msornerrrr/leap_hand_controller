@@ -1,0 +1,40 @@
+<launch>
+    <!-- Drop-in replacement for leap.launch with MCC compliance control -->
+
+    <arg name="ns" default="/" doc="Namespace for LEAP nodes. Keep '/' for root." />
+    <arg name="hand" default="right" doc="Hand type: 'left' or 'right'" />
+    <arg name="urdf_file" default="leap_$(arg hand).urdf" />
+    <arg name="frequency" default="50.0" doc="Control loop frequency (Hz) for compliance node" />
+    <arg name="cmd_topic" default="cmd_leap" />
+    <arg name="state_topic" default="state" />
+    <arg name="show_rviz" default="false" />
+
+    <!-- Compliance parameters -->
+    <arg name="fw_kP" default="900" doc="Firmware position P gain for Dynamixel motors" />
+    <arg name="kp_pos" default="100.0" doc="Compliance positional stiffness" />
+    <arg name="kp_rot" default="10.0" doc="Compliance rotational stiffness" />
+
+    <group ns="$(arg ns)">
+        <param name="robot_description" textfile="$(find leap_description)/robots/$(arg urdf_file)" />
+
+        <node name="leaphand_node" pkg="leap_hand" type="leaphand_compliance_node.py"
+              output="screen" required="true"
+              args="--frequency $(arg frequency)">
+            <param name="hand" value="$(arg hand)" />
+            <param name="cmd_topic" value="$(arg cmd_topic)" />
+            <param name="state_topic" value="$(arg state_topic)" />
+            <param name="fw_kP" value="$(arg fw_kP)" />
+            <param name="kp_pos" value="$(arg kp_pos)" />
+            <param name="kp_rot" value="$(arg kp_rot)" />
+        </node>
+
+        <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">
+            <param name="publish_frequency" value="60.0" />
+            <remap from="joint_states" to="$(arg state_topic)" />
+        </node>
+
+        <group if="$(arg show_rviz)">
+            <node name="rviz" pkg="rviz" type="rviz" args="-d $(find leap_hand)/config/rviz.rviz" output="screen" />
+        </group>
+    </group>
+</launch>

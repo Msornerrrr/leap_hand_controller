@@ -1,0 +1,22 @@
+<launch>
+    <!-- Launch compliance controller + test trajectory publisher -->
+    <arg name="hand" default="right" />
+    <arg name="ns" default="/" />
+    <arg name="pattern" default="wave" doc="Trajectory: wave, open_close, pinch, spread" />
+    <arg name="duration" default="4.0" doc="Seconds per cycle" />
+    <arg name="cycles" default="3" doc="Number of cycles (0 = infinite)" />
+    <arg name="show_rviz" default="false" />
+
+    <include file="$(find leap_hand)/launch/leap_compliance.launch">
+        <arg name="hand" value="$(arg hand)" />
+        <arg name="ns" value="$(arg ns)" />
+        <arg name="show_rviz" value="$(arg show_rviz)" />
+    </include>
+
+    <!-- Delayed start: compliance controller needs ~10s for prep trajectory -->
+    <group ns="$(arg ns)">
+        <node name="test_trajectory" pkg="leap_hand" type="test_trajectory.py" output="screen"
+              launch-prefix="bash -c 'sleep 10; exec $0 $@' --"
+              args="--pattern $(arg pattern) --duration $(arg duration) --cycles $(arg cycles) --hand $(arg hand)" />
+    </group>
+</launch>
