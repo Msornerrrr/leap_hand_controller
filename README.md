@@ -37,9 +37,6 @@ leap_hand_controller/
 │   │   └── leap_hand_utils/
 │   │       ├── dynamixel_client.py
 │   │       └── leap_hand_utils.py
-│   ├── mujoco_models/
-│   │   ├── right_hand_with_sites.xml
-│   │   └── assets/
 │   ├── launch/
 │   │   ├── leap.launch               # Rigid (Mode 5) controller
 │   │   ├── leap_compliance.launch    # MCC compliance controller
