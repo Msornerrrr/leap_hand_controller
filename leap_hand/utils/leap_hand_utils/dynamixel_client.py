@@ -29,7 +29,8 @@ LEN_GOAL_POSITION = 4
 DEFAULT_POS_SCALE = 2.0 * np.pi / 4096  # 0.088 degrees
 # See http://emanual.robotis.com/docs/en/dxl/x/xh430-v210/#goal-velocity
 DEFAULT_VEL_SCALE = 0.229 * 2.0 * np.pi / 60.0  # 0.229 rpm
-DEFAULT_CUR_SCALE = 1.34
+# XC330-M288-T: 1 mA per raw unit (the old 1.34 was for XH430 series)
+DEFAULT_CUR_SCALE = 1.0
 
 
 def dynamixel_cleanup_handler():
