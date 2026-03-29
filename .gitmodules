@@ -1,0 +1,4 @@
+[submodule "vendor/mcc"]
+	path = vendor/mcc
+	url = git@github.com:Msornerrrr/minimalist_compliance_control.git
+	branch = leap-right-hand
