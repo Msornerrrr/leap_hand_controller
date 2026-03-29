@@ -108,7 +108,7 @@ generate_messages(
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES leap_hand
-CATKIN_DEPENDS std_msgs message_generation message_runtime 
+CATKIN_DEPENDS std_msgs message_runtime
 #  DEPENDS system_lib
 )
 
@@ -163,7 +163,7 @@ install(DIRECTORY config
 install(DIRECTORY launch
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
-install(DIRECTORY scripts
+install(DIRECTORY controllers
   DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION}
 )
 
@@ -173,7 +173,9 @@ install(DIRECTORY scripts
 ## Mark executable scripts (Python etc.) for installation
 ## in contrast to setup.py, you can choose the destination
 catkin_install_python(PROGRAMS
-  scripts/leaphand_node.py
+  controllers/mode5_rigid/leaphand_node.py
+  controllers/mcc_compliance/leaphand_compliance_node.py
+  test/test_trajectory.py
   DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
 )
 
