@@ -24,7 +24,7 @@ import numpy as np
 
 import mujoco
 import rospy
-from geometry_msgs.msg import Vector3Stamped
+from geometry_msgs.msg import PoseArray, Vector3Stamped
 from sensor_msgs.msg import JointState
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -55,6 +55,10 @@ class LeapComplianceNode:
         self.hand = rospy.get_param('~hand', 'right')
         self.cmd_topic = rospy.get_param('~cmd_topic', 'cmd_leap')
         self.state_topic = rospy.get_param('~state_topic', 'state')
+        self.cmd_mode = rospy.get_param('~cmd_mode', 'joint')
+        self.cartesian_cmd_topic = rospy.get_param(
+            '~cartesian_cmd_topic', 'cmd_leap_cartesian'
+        )
         self.gravity_topic = rospy.get_param('~gravity_topic', 'mcc_gravity')
         self.publish_debug_markers = bool(
             rospy.get_param('~publish_debug_markers', False)
@@ -129,7 +133,23 @@ class LeapComplianceNode:
         self.latest_gravity = np.zeros(3, dtype=np.float32)
         self.live_gravity = None
 
-        rospy.Subscriber(self.cmd_topic, JointState, self._on_cmd, queue_size=1)
+        if self.cmd_mode == 'cartesian':
+            rospy.Subscriber(
+                self.cartesian_cmd_topic, PoseArray,
+                self._on_cartesian_cmd, queue_size=1,
+            )
+            rospy.loginfo(
+                "Cartesian command mode: listening on '%s' (PoseArray)",
+                self.cartesian_cmd_topic,
+            )
+        else:
+            rospy.Subscriber(
+                self.cmd_topic, JointState, self._on_cmd, queue_size=1,
+            )
+            rospy.loginfo(
+                "Joint command mode: listening on '%s' (JointState)",
+                self.cmd_topic,
+            )
         rospy.Subscriber(
             self.gravity_topic, Vector3Stamped, self._on_gravity, queue_size=1
         )
@@ -212,6 +232,37 @@ class LeapComplianceNode:
         with self.lock:
             self.policy.controller.sync_qpos(qpos_cmd)
             x_target = self.policy.controller.get_x_obs()
+            self.policy.pose_command = x_target.copy()
+            self.policy.base_pose_command = x_target.copy()
+
+    def _on_cartesian_cmd(self, msg):
+        """Receive direct Cartesian fingertip targets as PoseArray.
+
+        Expects 4 poses in site order: if_tip, mf_tip, rf_tip, th_tip.
+        Positions are used directly; identity quaternion keeps current orientation.
+        """
+        num_sites = len(self.policy.controller.config.site_names)
+        if len(msg.poses) != num_sites:
+            rospy.logwarn_throttle(
+                1.0,
+                "PoseArray has %d poses, expected %d", len(msg.poses), num_sites,
+            )
+            return
+
+        with self.lock:
+            # Keep current orientations from FK observation
+            x_target = self.policy.controller.get_x_obs().copy()
+            for i, pose in enumerate(msg.poses):
+                x_target[i, 0] = pose.position.x
+                x_target[i, 1] = pose.position.y
+                x_target[i, 2] = pose.position.z
+                # Use orientation from message if non-identity
+                q = pose.orientation
+                if not (q.x == 0.0 and q.y == 0.0 and q.z == 0.0):
+                    from scipy.spatial.transform import Rotation as R
+                    x_target[i, 3:6] = R.from_quat(
+                        [q.x, q.y, q.z, q.w]
+                    ).as_rotvec().astype(np.float32)
             self.policy.pose_command = x_target.copy()
             self.policy.base_pose_command = x_target.copy()
 
