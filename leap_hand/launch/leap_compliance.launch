@@ -13,6 +13,10 @@
     <arg name="fw_kP" default="900" doc="Firmware position P gain for Dynamixel motors" />
     <arg name="kp_pos" default="100.0" doc="Compliance positional stiffness" />
     <arg name="kp_rot" default="10.0" doc="Compliance rotational stiffness" />
+    <arg name="gravity_topic" default="mcc_gravity" doc="geometry_msgs/Vector3Stamped topic for gravity vector in palm frame" />
+    <arg name="publish_debug_markers" default="false" doc="Publish RViz MarkerArray for gravity and fingertip force estimates" />
+    <arg name="debug_force_scale" default="0.02" doc="Meters per Newton for debug force arrows" />
+    <arg name="debug_gravity_scale" default="0.01" doc="Meters per (m/s^2) for debug gravity arrow" />
 
     <group ns="$(arg ns)">
         <param name="robot_description" textfile="$(find leap_description)/robots/$(arg urdf_file)" />
@@ -26,6 +30,10 @@
             <param name="fw_kP" value="$(arg fw_kP)" />
             <param name="kp_pos" value="$(arg kp_pos)" />
             <param name="kp_rot" value="$(arg kp_rot)" />
+            <param name="gravity_topic" value="$(arg gravity_topic)" />
+            <param name="publish_debug_markers" value="$(arg publish_debug_markers)" />
+            <param name="debug_force_scale" value="$(arg debug_force_scale)" />
+            <param name="debug_gravity_scale" value="$(arg debug_gravity_scale)" />
         </node>
 
         <node name="robot_state_publisher" pkg="robot_state_publisher" type="robot_state_publisher">

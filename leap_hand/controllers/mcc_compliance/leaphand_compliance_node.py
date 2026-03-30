@@ -22,8 +22,11 @@ import time
 import threading
 import numpy as np
 
+import mujoco
 import rospy
+from geometry_msgs.msg import Vector3Stamped
 from sensor_msgs.msg import JointState
+from visualization_msgs.msg import Marker, MarkerArray
 
 # ── MCC imports ──────────────────────────────────────────────────────────────
 import gin
@@ -52,6 +55,15 @@ class LeapComplianceNode:
         self.hand = rospy.get_param('~hand', 'right')
         self.cmd_topic = rospy.get_param('~cmd_topic', 'cmd_leap')
         self.state_topic = rospy.get_param('~state_topic', 'state')
+        self.gravity_topic = rospy.get_param('~gravity_topic', 'mcc_gravity')
+        self.publish_debug_markers = bool(
+            rospy.get_param('~publish_debug_markers', False)
+        )
+        self.debug_force_scale = float(rospy.get_param('~debug_force_scale', 0.02))
+        self.debug_gravity_scale = float(
+            rospy.get_param('~debug_gravity_scale', 0.01)
+        )
+        self.debug_frame = rospy.get_param('~debug_frame', 'palm_lower')
 
         # ── Initialize MCC (same as run_policy.py main()) ────────────────
         mcc_root = os.environ.get('MCC_ROOT', '/opt/mcc')
@@ -96,7 +108,9 @@ class LeapComplianceNode:
             enable_plotter=False,
             enable_force_perturbation=False,
         )
-        rospy.loginfo("CompliancePolicy initialized")
+        # Default to zero gravity — real gravity comes via the gravity topic
+        self.policy.controller.wrench_sim.model.opt.gravity[:] = 0.0
+        rospy.loginfo("CompliancePolicy initialized (gravity zeroed, awaiting topic)")
 
         # Track start time so obs.time starts from 0
         # (policy.step uses obs.time for prep trajectory interpolation)
@@ -110,20 +124,86 @@ class LeapComplianceNode:
         self.latest_pos = np.zeros(16, dtype=np.float32)
         self.latest_vel = np.zeros(16, dtype=np.float32)
         self.latest_cur = np.zeros(16, dtype=np.float32)
+        self.latest_wrenches = {}
+        self.latest_site_positions = {}
+        self.latest_gravity = np.zeros(3, dtype=np.float32)
+        self.live_gravity = None
 
         rospy.Subscriber(self.cmd_topic, JointState, self._on_cmd, queue_size=1)
+        rospy.Subscriber(
+            self.gravity_topic, Vector3Stamped, self._on_gravity, queue_size=1
+        )
+        rospy.loginfo("Listening for gravity on '%s'", self.gravity_topic)
         self.state_pub = rospy.Publisher(self.state_topic, JointState, queue_size=10)
+        self.gravity_pub = rospy.Publisher(
+            'mcc_debug/gravity', Vector3Stamped, queue_size=1
+        )
+        self.wrench_marker_pub = rospy.Publisher(
+            'mcc_debug/wrench_markers', MarkerArray, queue_size=1
+        )
         self.pub_timer = rospy.Timer(
             rospy.Duration(1.0 / frequency), self._publish_state)
+
+        self.site_ids = dict(self.policy.controller.site_ids)
+        self.palm_body_id = mujoco.mj_name2id(
+            self.policy.controller.wrench_sim.model,
+            mujoco.mjtObj.mjOBJ_BODY,
+            'palm',
+        )
 
         # Start control loop
         self.control_thread = threading.Thread(target=self._control_loop, daemon=True)
         self.control_thread.start()
         rospy.loginfo(f"Compliance node running at {frequency} Hz")
 
+    def _on_gravity(self, msg):
+        with self.lock:
+            self.live_gravity = np.array(
+                [msg.vector.x, msg.vector.y, msg.vector.z], dtype=np.float32
+            )
+
+    def _apply_gravity(self):
+        with self.lock:
+            if self.live_gravity is not None:
+                gravity = self.live_gravity.copy()
+            else:
+                gravity = np.asarray(
+                    self.policy.controller.wrench_sim.model.opt.gravity,
+                    dtype=np.float32,
+                ).copy()
+        self.policy.controller.wrench_sim.model.opt.gravity[:] = gravity
+        self.latest_gravity = gravity
+
+    def _ordered_ros_values_from_msg(self, msg):
+        if msg.name and len(msg.name) == len(msg.position):
+            pos_by_name = {name: pos for name, pos in zip(msg.name, msg.position)}
+            missing = [name for name in self.joint_names if name not in pos_by_name]
+            if missing:
+                rospy.logwarn_throttle(
+                    1.0,
+                    "JointState missing expected names: %s",
+                    ", ".join(missing),
+                )
+                return None
+            return np.asarray(
+                [pos_by_name[name] for name in self.joint_names], dtype=np.float32
+            )
+
+        q_cmd_ros = np.asarray(msg.position, dtype=np.float32)
+        if q_cmd_ros.shape[0] != len(self.joint_names):
+            rospy.logwarn_throttle(
+                1.0,
+                f"Expected {len(self.joint_names)} commanded joints, got {q_cmd_ros.shape[0]}",
+            )
+            return None
+        return q_cmd_ros
+
     def _on_cmd(self, msg):
         """Receive joint command → convert to Cartesian target via MCC's FK."""
-        q_cmd = np.array(msg.position, dtype=np.float32)
+        q_cmd_ros = self._ordered_ros_values_from_msg(msg)
+        if q_cmd_ros is None:
+            return
+        q_cmd = q_cmd_ros
 
         # Convert motor-order joint command to qpos using RealWorldDynamixel's mapping
         qpos_cmd = self.sim.get_qpos(q_cmd)
@@ -149,6 +229,8 @@ class LeapComplianceNode:
                     self.start_time = float(obs.time)
                 obs.time -= self.start_time
 
+                self._apply_gravity()
+
                 # Step MCC policy (prep interpolation → alignment → compliance)
                 action = self.policy.step(obs, self.sim)
                 action_arr = np.asarray(action, dtype=np.float32)
@@ -159,13 +241,22 @@ class LeapComplianceNode:
                 self.sim.sync()
 
                 # Cache state for ROS publishing
-                # obs.motor_pos is in MCC's sorted motor order (= config order)
-                # which matches joint_0..joint_15 for the LEAP hand
                 self.latest_pos = np.asarray(obs.motor_pos, dtype=np.float32)
                 self.latest_vel = np.asarray(obs.motor_vel, dtype=np.float32)
                 self.latest_cur = np.asarray(
                     obs.motor_cur if obs.motor_cur is not None
                     else np.zeros(16), dtype=np.float32)
+                self.latest_wrenches = {
+                    site: np.asarray(wrench, dtype=np.float32).copy()
+                    for site, wrench in self.policy.wrenches_by_site.items()
+                }
+                self.latest_site_positions = {
+                    site: np.asarray(
+                        self.policy.controller.wrench_sim.data.site_xpos[site_id],
+                        dtype=np.float32,
+                    ).copy()
+                    for site, site_id in self.site_ids.items()
+                }
 
             except Exception as e:
                 rospy.logerr(f"Control loop error: {e}")
@@ -186,6 +277,104 @@ class LeapComplianceNode:
         msg.velocity = self.latest_vel.tolist()
         msg.effort = self.latest_cur.tolist()
         self.state_pub.publish(msg)
+        self._publish_gravity_debug(msg.header.stamp)
+        if self.publish_debug_markers:
+            self._publish_debug_markers(msg.header.stamp)
+
+    def _publish_gravity_debug(self, stamp):
+        msg = Vector3Stamped()
+        msg.header.stamp = stamp
+        msg.header.frame_id = self.debug_frame
+        gravity = self.latest_gravity
+        if self.palm_body_id >= 0:
+            palm_rot = np.asarray(
+                self.policy.controller.wrench_sim.data.xmat[self.palm_body_id],
+                dtype=np.float32,
+            ).reshape(3, 3)
+            gravity = self._vec_world_to_local(gravity, palm_rot)
+        msg.vector.x = float(gravity[0])
+        msg.vector.y = float(gravity[1])
+        msg.vector.z = float(gravity[2])
+        self.gravity_pub.publish(msg)
+
+    def _make_arrow_marker(self, marker_id, ns, stamp, start, vec, scale, color):
+        marker = Marker()
+        marker.header.stamp = stamp
+        marker.header.frame_id = self.debug_frame
+        marker.ns = ns
+        marker.id = marker_id
+        marker.type = Marker.ARROW
+        marker.action = Marker.ADD
+        marker.pose.orientation.w = 1.0
+        marker.scale.x = 0.004
+        marker.scale.y = 0.008
+        marker.scale.z = 0.012
+        marker.color.r = color[0]
+        marker.color.g = color[1]
+        marker.color.b = color[2]
+        marker.color.a = color[3]
+        marker.lifetime = rospy.Duration(0.2)
+
+        p0 = start.reshape(3)
+        p1 = (start + vec * scale).reshape(3)
+        from geometry_msgs.msg import Point
+        marker.points = [
+            Point(x=float(p0[0]), y=float(p0[1]), z=float(p0[2])),
+            Point(x=float(p1[0]), y=float(p1[1]), z=float(p1[2])),
+        ]
+        return marker
+
+    @staticmethod
+    def _world_to_local(point_world, origin_world, rot_world_from_local):
+        return rot_world_from_local.T @ (point_world - origin_world)
+
+    @staticmethod
+    def _vec_world_to_local(vec_world, rot_world_from_local):
+        return rot_world_from_local.T @ vec_world
+
+    def _publish_debug_markers(self, stamp):
+        markers = MarkerArray()
+        palm_pos = np.zeros(3, dtype=np.float32)
+        palm_rot = np.eye(3, dtype=np.float32)
+        if self.palm_body_id >= 0:
+            palm_pos = np.asarray(
+                self.policy.controller.wrench_sim.data.xpos[self.palm_body_id],
+                dtype=np.float32,
+            ).copy()
+            palm_rot = np.asarray(
+                self.policy.controller.wrench_sim.data.xmat[self.palm_body_id],
+                dtype=np.float32,
+            ).reshape(3, 3)
+        markers.markers.append(
+            self._make_arrow_marker(
+                0,
+                'gravity',
+                stamp,
+                np.zeros(3, dtype=np.float32),
+                self._vec_world_to_local(self.latest_gravity, palm_rot),
+                self.debug_gravity_scale,
+                (0.2, 0.6, 1.0, 0.9),
+            )
+        )
+
+        for idx, site in enumerate(sorted(self.latest_wrenches.keys()), start=1):
+            wrench = self.latest_wrenches[site]
+            site_pos = self.latest_site_positions.get(site)
+            if site_pos is None or wrench.shape[0] < 3:
+                continue
+            markers.markers.append(
+                self._make_arrow_marker(
+                    idx,
+                    'wrench_force',
+                    stamp,
+                    self._world_to_local(site_pos, palm_pos, palm_rot),
+                    self._vec_world_to_local(wrench[:3], palm_rot),
+                    self.debug_force_scale,
+                    (1.0, 0.3, 0.2, 0.9),
+                )
+            )
+
+        self.wrench_marker_pub.publish(markers)
 
     def shutdown(self):
         try:

@@ -47,6 +47,7 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
        ros-noetic-geometry-msgs \
        ros-noetic-tf2-ros \
        ros-noetic-robot-state-publisher \
+       ros-noetic-rviz \
        python3-catkin-tools \
     && rm -rf /var/lib/apt/lists/*
 

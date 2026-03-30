@@ -121,6 +121,10 @@ Compliance-specific arguments:
 | `fw_kP` | `900` | Firmware position P gain |
 | `kp_pos` | `100.0` | Positional stiffness |
 | `kp_rot` | `10.0` | Rotational stiffness |
+| `gravity_topic` | `mcc_gravity` | Topic for real-time gravity vector (`geometry_msgs/Vector3Stamped`) |
+| `publish_debug_markers` | `false` | Publish wrench/gravity arrows to RViz |
+| `debug_force_scale` | `0.02` | Arrow scale: meters per Newton |
+| `debug_gravity_scale` | `0.01` | Arrow scale: meters per m/s² |
 
 ### Test Trajectories
 
@@ -158,9 +162,23 @@ Motor current
 The ROS compliance node (`leaphand_compliance_node.py`) wraps MCC's `RealWorldDynamixel` + `CompliancePolicy` with standard ROS topics:
 
 - Subscribes to `cmd_leap` (`sensor_msgs/JointState`) -- 16 joint positions
+- Subscribes to `mcc_gravity` (`geometry_msgs/Vector3Stamped`) -- gravity vector in MuJoCo world frame (palm frame for fixed-base). Defaults to zero; publish to enable gravity compensation in wrench estimation.
 - Publishes `state` (`sensor_msgs/JointState`) -- position, velocity, effort (current mA)
+- Publishes `mcc_debug/wrench_markers` (`visualization_msgs/MarkerArray`) -- per-fingertip force arrows + gravity arrow (when `publish_debug_markers:=true`)
+- Publishes `mcc_debug/gravity` (`geometry_msgs/Vector3Stamped`) -- active gravity in palm frame
 
 Per-fingertip control via MCC's command matrix: position target, orientation target, stiffness (Kp 3x3), damping (Kd 3x3), force command.
+
+### Gravity Vector
+
+MCC uses gravity to compute bias torques (finger weight). The node starts with **zero gravity** and expects an external node to publish the real gravity vector on the `mcc_gravity` topic. This allows real-time adaptation when the hand orientation changes.
+
+```bash
+# Example: static gravity (palm facing up, Z-down)
+rostopic pub /mcc_gravity geometry_msgs/Vector3Stamped "{header: {frame_id: ''}, vector: {x: 0, y: 0, z: -9.81}}"
+```
+
+Without a gravity publisher, wrench estimates include finger weight as apparent external force.
 
 ## Baudrate Setup
 
@@ -182,7 +200,7 @@ Persists across power cycles.
 | Ring   | 8        | 9           | 10  | 11  |
 | Thumb  | 12       | 13          | 14  | 15  |
 
-MuJoCo swaps MCP Forward/Side (joints 0/1, 4/5, 8/9). MCC handles this mapping internally.
+MCC's motor config and MuJoCo actuator order match this hardware ID assignment (MCP Side first, then MCP Forward per finger).
 
 ## Acknowledgements
 

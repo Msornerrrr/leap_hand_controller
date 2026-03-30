@@ -10,6 +10,8 @@ project(leap_hand)
 find_package(catkin REQUIRED COMPONENTS
     rospy
     std_msgs
+    geometry_msgs
+    visualization_msgs
     message_generation
 )
 
@@ -108,7 +110,7 @@ generate_messages(
 catkin_package(
 #  INCLUDE_DIRS include
 #  LIBRARIES leap_hand
-CATKIN_DEPENDS std_msgs message_runtime
+CATKIN_DEPENDS std_msgs geometry_msgs visualization_msgs message_runtime
 #  DEPENDS system_lib
 )
 
