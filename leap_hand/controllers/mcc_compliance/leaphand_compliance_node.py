@@ -132,6 +132,8 @@ class LeapComplianceNode:
         self.latest_site_positions = {}
         self.latest_gravity = np.zeros(3, dtype=np.float32)
         self.live_gravity = None
+        self._pending_qpos_cmd = None
+        self._pending_cartesian_cmd = None
 
         if self.cmd_mode == 'cartesian':
             rospy.Subscriber(
@@ -219,28 +221,16 @@ class LeapComplianceNode:
         return q_cmd_ros
 
     def _on_cmd(self, msg):
-        """Receive joint command → convert to Cartesian target via MCC's FK."""
+        """Receive joint command — queue for FK in the control loop thread."""
         q_cmd_ros = self._ordered_ros_values_from_msg(msg)
         if q_cmd_ros is None:
             return
-        q_cmd = q_cmd_ros
-
-        # Convert motor-order joint command to qpos using RealWorldDynamixel's mapping
-        qpos_cmd = self.sim.get_qpos(q_cmd)
-
-        # FK: get fingertip poses from these joint angles
+        qpos_cmd = self.sim.get_qpos(q_cmd_ros)
         with self.lock:
-            self.policy.controller.sync_qpos(qpos_cmd)
-            x_target = self.policy.controller.get_x_obs()
-            self.policy.pose_command = x_target.copy()
-            self.policy.base_pose_command = x_target.copy()
+            self._pending_qpos_cmd = qpos_cmd
 
     def _on_cartesian_cmd(self, msg):
-        """Receive direct Cartesian fingertip targets as PoseArray.
-
-        Expects 4 poses in site order: if_tip, mf_tip, rf_tip, th_tip.
-        Positions are used directly; identity quaternion keeps current orientation.
-        """
+        """Receive direct Cartesian fingertip targets — queue for control loop."""
         num_sites = len(self.policy.controller.config.site_names)
         if len(msg.poses) != num_sites:
             rospy.logwarn_throttle(
@@ -248,21 +238,37 @@ class LeapComplianceNode:
                 "PoseArray has %d poses, expected %d", len(msg.poses), num_sites,
             )
             return
-
+        positions = np.zeros((num_sites, 3), dtype=np.float32)
+        orientations = [None] * num_sites
+        for i, pose in enumerate(msg.poses):
+            positions[i] = [pose.position.x, pose.position.y, pose.position.z]
+            q = pose.orientation
+            if not (q.x == 0.0 and q.y == 0.0 and q.z == 0.0):
+                orientations[i] = (q.x, q.y, q.z, q.w)
         with self.lock:
-            # Keep current orientations from FK observation
+            self._pending_cartesian_cmd = (positions, orientations)
+
+    def _apply_pending_commands(self):
+        """Apply queued commands in the control loop thread (thread-safe)."""
+        with self.lock:
+            qpos_cmd = self._pending_qpos_cmd
+            cartesian_cmd = self._pending_cartesian_cmd
+            self._pending_qpos_cmd = None
+            self._pending_cartesian_cmd = None
+
+        if qpos_cmd is not None:
+            self.policy.controller.sync_qpos(qpos_cmd)
+            x_target = self.policy.controller.get_x_obs()
+            self.policy.pose_command = x_target.copy()
+            self.policy.base_pose_command = x_target.copy()
+        elif cartesian_cmd is not None:
+            positions, orientations = cartesian_cmd
             x_target = self.policy.controller.get_x_obs().copy()
-            for i, pose in enumerate(msg.poses):
-                x_target[i, 0] = pose.position.x
-                x_target[i, 1] = pose.position.y
-                x_target[i, 2] = pose.position.z
-                # Use orientation from message if non-identity
-                q = pose.orientation
-                if not (q.x == 0.0 and q.y == 0.0 and q.z == 0.0):
+            x_target[:, :3] = positions
+            for i, ori in enumerate(orientations):
+                if ori is not None:
                     from scipy.spatial.transform import Rotation as R
-                    x_target[i, 3:6] = R.from_quat(
-                        [q.x, q.y, q.z, q.w]
-                    ).as_rotvec().astype(np.float32)
+                    x_target[i, 3:6] = R.from_quat(ori).as_rotvec().astype(np.float32)
             self.policy.pose_command = x_target.copy()
             self.policy.base_pose_command = x_target.copy()
 
@@ -272,6 +278,7 @@ class LeapComplianceNode:
         dt = 1.0 / self.frequency
 
         while not rospy.is_shutdown():
+            t0 = time.monotonic()
             try:
                 obs = self.sim.get_observation()
 
@@ -281,6 +288,7 @@ class LeapComplianceNode:
                 obs.time -= self.start_time
 
                 self._apply_gravity()
+                self._apply_pending_commands()
 
                 # Step MCC policy (prep interpolation → alignment → compliance)
                 action = self.policy.step(obs, self.sim)
@@ -312,6 +320,8 @@ class LeapComplianceNode:
             except Exception as e:
                 rospy.logerr(f"Control loop error: {e}")
 
+            t_proc = time.monotonic()
+
             # Rate limit (same as run_policy.py)
             next_tick += dt
             sleep_s = next_tick - time.monotonic()
@@ -319,6 +329,17 @@ class LeapComplianceNode:
                 time.sleep(sleep_s)
             else:
                 next_tick = time.monotonic()
+
+            t_end = time.monotonic()
+            proc_ms = (t_proc - t0) * 1000.0
+            actual_dt = t_end - t0
+            actual_hz = 1.0 / actual_dt if actual_dt > 0 else 0.0
+            max_hz = 1.0 / (t_proc - t0) if (t_proc - t0) > 0 else 0.0
+            rospy.loginfo_throttle(
+                5.0,
+                "control_loop Max rate: %.1f Hz (%.1f ms), Actual rate: %.1f Hz",
+                max_hz, proc_ms, actual_hz,
+            )
 
     def _publish_state(self, _event=None):
         msg = JointState()
