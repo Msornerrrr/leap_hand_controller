@@ -24,7 +24,7 @@ import numpy as np
 
 import mujoco
 import rospy
-from geometry_msgs.msg import PoseArray, Vector3Stamped
+from geometry_msgs.msg import PoseArray, Vector3Stamped, WrenchStamped
 from sensor_msgs.msg import JointState
 from visualization_msgs.msg import Marker, MarkerArray
 
@@ -130,6 +130,7 @@ class LeapComplianceNode:
         self.latest_cur = np.zeros(16, dtype=np.float32)
         self.latest_wrenches = {}
         self.latest_site_positions = {}
+        self.latest_net_wrench = np.zeros(6, dtype=np.float32)
         self.latest_gravity = np.zeros(3, dtype=np.float32)
         self.live_gravity = None
         self._pending_qpos_cmd = None
@@ -159,6 +160,9 @@ class LeapComplianceNode:
         self.state_pub = rospy.Publisher(self.state_topic, JointState, queue_size=10)
         self.gravity_pub = rospy.Publisher(
             'mcc_debug/gravity', Vector3Stamped, queue_size=1
+        )
+        self.net_wrench_pub = rospy.Publisher(
+            'mcc_net_wrench', WrenchStamped, queue_size=1
         )
         self.wrench_marker_pub = rospy.Publisher(
             'mcc_debug/wrench_markers', MarkerArray, queue_size=1
@@ -317,6 +321,26 @@ class LeapComplianceNode:
                     for site, site_id in self.site_ids.items()
                 }
 
+                # Aggregate per-fingertip wrenches to net wrench at palm origin
+                palm_pos_w = np.asarray(
+                    self.policy.controller.wrench_sim.data.xpos[self.palm_body_id],
+                    dtype=np.float64,
+                ) if self.palm_body_id >= 0 else np.zeros(3)
+                net_force = np.zeros(3, dtype=np.float64)
+                net_torque = np.zeros(3, dtype=np.float64)
+                for site, wrench in self.latest_wrenches.items():
+                    f_i = wrench[:3].astype(np.float64)
+                    net_force += f_i
+                    site_pos = self.latest_site_positions.get(site)
+                    if site_pos is not None:
+                        r_i = site_pos.astype(np.float64) - palm_pos_w
+                        net_torque += np.cross(r_i, f_i)
+                    if wrench.shape[0] >= 6:
+                        net_torque += wrench[3:6].astype(np.float64)
+                self.latest_net_wrench = np.concatenate(
+                    [net_force, net_torque]
+                ).astype(np.float32)
+
             except Exception as e:
                 rospy.logerr(f"Control loop error: {e}")
 
@@ -349,9 +373,33 @@ class LeapComplianceNode:
         msg.velocity = self.latest_vel.tolist()
         msg.effort = self.latest_cur.tolist()
         self.state_pub.publish(msg)
+        self._publish_net_wrench(msg.header.stamp)
         self._publish_gravity_debug(msg.header.stamp)
         if self.publish_debug_markers:
             self._publish_debug_markers(msg.header.stamp)
+
+    def _publish_net_wrench(self, stamp):
+        """Publish aggregated net wrench at palm origin in palm-local frame."""
+        w = self.latest_net_wrench
+        # Transform from world frame to palm-local frame
+        palm_rot = np.eye(3, dtype=np.float32)
+        if self.palm_body_id >= 0:
+            palm_rot = np.asarray(
+                self.policy.controller.wrench_sim.data.xmat[self.palm_body_id],
+                dtype=np.float32,
+            ).reshape(3, 3)
+        force_local = self._vec_world_to_local(w[:3], palm_rot)
+        torque_local = self._vec_world_to_local(w[3:], palm_rot)
+        msg = WrenchStamped()
+        msg.header.stamp = stamp
+        msg.header.frame_id = self.debug_frame
+        msg.wrench.force.x = float(force_local[0])
+        msg.wrench.force.y = float(force_local[1])
+        msg.wrench.force.z = float(force_local[2])
+        msg.wrench.torque.x = float(torque_local[0])
+        msg.wrench.torque.y = float(torque_local[1])
+        msg.wrench.torque.z = float(torque_local[2])
+        self.net_wrench_pub.publish(msg)
 
     def _publish_gravity_debug(self, stamp):
         msg = Vector3Stamped()
@@ -426,6 +474,37 @@ class LeapComplianceNode:
                 self._vec_world_to_local(self.latest_gravity, palm_rot),
                 self.debug_gravity_scale,
                 (0.2, 0.6, 1.0, 0.9),
+            )
+        )
+
+        # Net wrench arrow at palm origin (green)
+        net_force_local = self._vec_world_to_local(
+            self.latest_net_wrench[:3], palm_rot
+        )
+        markers.markers.append(
+            self._make_arrow_marker(
+                100,
+                'net_wrench',
+                stamp,
+                np.zeros(3, dtype=np.float32),
+                net_force_local,
+                self.debug_force_scale,
+                (0.2, 1.0, 0.3, 0.9),
+            )
+        )
+        # Net torque arrow at palm origin (cyan)
+        net_torque_local = self._vec_world_to_local(
+            self.latest_net_wrench[3:], palm_rot
+        )
+        markers.markers.append(
+            self._make_arrow_marker(
+                101,
+                'net_wrench',
+                stamp,
+                np.zeros(3, dtype=np.float32),
+                net_torque_local,
+                self.debug_force_scale,
+                (0.0, 0.8, 0.8, 0.9),
             )
         )
 
