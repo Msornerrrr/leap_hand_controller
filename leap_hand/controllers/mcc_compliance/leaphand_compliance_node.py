@@ -73,7 +73,11 @@ class LeapComplianceNode:
         mcc_root = os.environ.get('MCC_ROOT', '/opt/mcc')
         os.chdir(mcc_root)
 
-        gin_file = 'config/leap.gin'
+        gin_file = (
+            'config/leap.gin' if self.hand == 'right'
+            else 'config/leap_left.gin'
+        )
+        rospy.loginfo("Loading gin config: %s", gin_file)
         gin.parse_config_file(gin_file, skip_unknown=True)
 
         motor_cfg_paths = MotorConfigPaths()
@@ -104,9 +108,13 @@ class LeapComplianceNode:
 
         # Build CompliancePolicy (MCC's full compliance stack)
         # This includes the gentle prep trajectory (7 sec interpolation)
+        gin_config_name = (
+            'leap.gin' if self.hand == 'right' else 'leap_left.gin'
+        )
         self.policy = CompliancePolicy(
             name='compliance',
             robot='leap',
+            config_name=gin_config_name,
             init_motor_pos=init_motor_pos,
             start_keyboard_listener=False,
             enable_plotter=False,

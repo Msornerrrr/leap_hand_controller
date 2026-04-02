@@ -1,11 +1,11 @@
 <robot name="onshape">
-<link name="palm_lower_left">
+<link name="palm_lower">
 <visual>
 <origin xyz="-0.095574224938392599027 -0.11704001150113751972 0.02077960705260517571" rpy="1.57079632679489678 1.1239611599647231752e-28 3.1415926535897908956" />
 <geometry>
 <mesh filename="package://leap_description/meshes/palm_lower_left.stl"/>
 </geometry>
-<material name="palm_lower_left_material">
+<material name="palm_lower_material">
 <color rgba="0.60392156862745094426 0.14901960784313725283 0.14901960784313725283 1.0"/>
 </material>
 </visual>
@@ -125,7 +125,7 @@
 
 <joint name="joint_1" type="revolute">
 <origin xyz="-0.082574224938392518092 -0.085740011501137525229 0.0078008885838987494094" rpy="1.5707963267948987784 1.570796326794896558 0" />
-<parent link="palm_lower_left" />
+<parent link="palm_lower" />
 <child link="mcp_joint" />
 <axis xyz="0 0 -1"/>
 <limit effort="0.95" velocity="8.48" lower = "-0.314" upper = "2.23"/>
@@ -253,7 +253,7 @@
 
 <joint name="joint_5" type="revolute">
 <origin xyz="-0.08257422493900856697 -0.040290011501137479311 0.007800888583679612201" rpy="1.5707963267948992225 1.570796326794896558 0" />
-<parent link="palm_lower_left" />
+<parent link="palm_lower" />
 <child link="mcp_joint_2" />
 <axis xyz="0 0 -1"/>
 <limit effort="0.95" velocity="8.48" lower = "-0.314" upper = "2.23"/>
@@ -382,7 +382,7 @@
 
 <joint name="joint_9" type="revolute">
 <origin xyz="-0.082574224938392323803 0.0051599884988625839555 0.0078008885838987598177" rpy="1.5707963267948987784 1.570796326794896558 0" />
-<parent link="palm_lower_left" />
+<parent link="palm_lower" />
 <child link="mcp_joint_3" />
 <axis xyz="0 0 -1"/>
 <limit effort="0.95" velocity="8.48" lower = "-0.314" upper = "2.23"/>
@@ -500,20 +500,20 @@
 </link>
 
 <joint name="joint_12" type="revolute">
-<origin xyz="-1.0148132334464321502e-16 -0.014100000000000126321 -0.012999999999999956035" rpy="-1.570796326794896336 -1.570796326794896336 0" />
-<parent link="thumb_left_temp_base" />
-<child link="thumb_pip" />
+<origin xyz="-0.14487422493839263726 -0.090040011501137440231 0.004900888583899039308" rpy="3.5629789726327258012e-15 1.5707963267948961139 0" />
+<parent link="palm_lower" />
+<child link="thumb_left_temp_base" />
 <axis xyz="0 0 -1"/>
-<limit effort="0.95" velocity="8.48" lower = "-2.094" upper = "0.349"/> 
+<limit effort="0.95" velocity="8.48" lower = "-2.443" upper = "0.47"/>
 <joint_properties friction="0.0"/>
 </joint>
 
 <joint name="joint_13" type="revolute">
-<origin xyz="-0.14487422493839263726 -0.090040011501137440231 0.004900888583899039308" rpy="3.5629789726327258012e-15 1.5707963267948961139 0" />
-<parent link="palm_lower_left" />
-<child link="thumb_left_temp_base" />
+<origin xyz="-1.0148132334464321502e-16 -0.014100000000000126321 -0.012999999999999956035" rpy="-1.570796326794896336 -1.570796326794896336 0" />
+<parent link="thumb_left_temp_base" />
+<child link="thumb_pip" />
 <axis xyz="0 0 -1"/>
-<limit effort="0.95" velocity="8.48" lower = "-2.443" upper = "0.47"/> 
+<limit effort="0.95" velocity="8.48" lower = "-2.094" upper = "0.349"/>
 <joint_properties friction="0.0"/>
 </joint>
 
