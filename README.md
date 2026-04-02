@@ -186,7 +186,7 @@ MCC's C++ backend uses 2 Mbaud. LEAP Hand ships at 4 Mbaud. Change once:
 
 ```bash
 # Inside Docker container
-python3 /app/utils/set_baudrate.py --from 4000000 --to 2000000
+python3 /catkin_ws/src/leap_hand/utils/set_baudrate.py --from 4000000 --to 2000000
 ```
 
 Persists across power cycles.

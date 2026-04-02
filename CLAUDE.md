@@ -115,7 +115,7 @@ rostopic pub /mcc_gravity geometry_msgs/Vector3Stamped \
 
 ## Hardware Notes
 
-- Motors must be set to **2 Mbaud** (factory is 4 Mbaud): `python3 /app/utils/set_baudrate.py --from 4000000 --to 2000000`
+- Motors must be set to **2 Mbaud** (factory is 4 Mbaud): `python3 /catkin_ws/src/leap_hand/utils/set_baudrate.py --from 4000000 --to 2000000`
 - USB latency is set to 1ms by `docker/entrypoint.sh` — critical for Dynamixel timing
 - USB ports should use udev symlinks (`/dev/ttyLEAP_RIGHT`, `/dev/ttyLEAP_LEFT`)
 - Motor position offset: hardware uses π offset (LEAP convention) vs. URDF [0, 2π]
