@@ -54,6 +54,15 @@ POSE_SPREAD = np.array([
 ], dtype=np.float32)
 
 
+def adapt_for_hand(q, hand):
+    """Negate thumb joints 12-13 for left hand (mirrored CMC/AXL)."""
+    if hand == 'left':
+        q = q.copy()
+        q[12] = -q[12]
+        q[13] = -q[13]
+    return q
+
+
 def clamp_to_limits(q, hand='right'):
     """Clamp joint angles to LEAP hand limits."""
     sim_min, sim_max = LEAP_limits(hand)
@@ -144,12 +153,12 @@ def main():
             msg = JointState()
             msg.header.stamp = rospy.Time.now()
             msg.name = joint_names
-            msg.position = clamp_to_limits(POSE_OPEN, args.hand).tolist()
+            msg.position = clamp_to_limits(adapt_for_hand(POSE_OPEN, args.hand), args.hand).tolist()
             pub.publish(msg)
             rospy.sleep(0.5)
             break
 
-        q = clamp_to_limits(pattern_fn(t, args.duration), args.hand)
+        q = clamp_to_limits(adapt_for_hand(pattern_fn(t, args.duration), args.hand), args.hand)
 
         msg = JointState()
         msg.header.stamp = rospy.Time.now()
