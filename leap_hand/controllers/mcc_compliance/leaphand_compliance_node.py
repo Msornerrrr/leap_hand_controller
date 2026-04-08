@@ -172,6 +172,17 @@ class LeapComplianceNode:
         self.net_wrench_pub = rospy.Publisher(
             'mcc_net_wrench', WrenchStamped, queue_size=1
         )
+        # Per-finger wrench publishers (world frame, for visualization/fusion)
+        self.site_wrench_pubs = {}
+        for site_name in self.policy.controller.config.site_names:
+            topic = f"mcc_wrench/{site_name}"
+            self.site_wrench_pubs[site_name] = rospy.Publisher(
+                topic, WrenchStamped, queue_size=1,
+            )
+        rospy.loginfo(
+            "Publishing per-finger wrenches on 'mcc_wrench/{%s}'",
+            ",".join(self.policy.controller.config.site_names),
+        )
         self.wrench_marker_pub = rospy.Publisher(
             'mcc_debug/wrench_markers', MarkerArray, queue_size=1
         )
@@ -382,6 +393,7 @@ class LeapComplianceNode:
         msg.effort = self.latest_cur.tolist()
         self.state_pub.publish(msg)
         self._publish_net_wrench(msg.header.stamp)
+        self._publish_site_wrenches(msg.header.stamp)
         self._publish_gravity_debug(msg.header.stamp)
         if self.publish_debug_markers:
             self._publish_debug_markers(msg.header.stamp)
@@ -408,6 +420,23 @@ class LeapComplianceNode:
         msg.wrench.torque.y = float(torque_local[1])
         msg.wrench.torque.z = float(torque_local[2])
         self.net_wrench_pub.publish(msg)
+
+    def _publish_site_wrenches(self, stamp):
+        """Publish per-finger estimated wrenches in world frame."""
+        for site, pub in self.site_wrench_pubs.items():
+            wrench = self.latest_wrenches.get(site)
+            if wrench is None or wrench.shape[0] < 6:
+                continue
+            msg = WrenchStamped()
+            msg.header.stamp = stamp
+            msg.header.frame_id = "world"
+            msg.wrench.force.x = float(wrench[0])
+            msg.wrench.force.y = float(wrench[1])
+            msg.wrench.force.z = float(wrench[2])
+            msg.wrench.torque.x = float(wrench[3])
+            msg.wrench.torque.y = float(wrench[4])
+            msg.wrench.torque.z = float(wrench[5])
+            pub.publish(msg)
 
     def _publish_gravity_debug(self, stamp):
         msg = Vector3Stamped()
