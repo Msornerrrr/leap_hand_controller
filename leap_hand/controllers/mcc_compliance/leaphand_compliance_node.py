@@ -69,6 +69,12 @@ class LeapComplianceNode:
         )
         self.debug_frame = rospy.get_param('~debug_frame', 'palm_lower')
 
+        # Cartesian compliance stiffness overrides (forwarded from roslaunch).
+        # When provided, these override ComplianceConfig.kp_pos/kp_rot from the
+        # gin file so app-level configs can tune stiffness without rebuilding.
+        kp_pos_override = rospy.get_param('~kp_pos', None)
+        kp_rot_override = rospy.get_param('~kp_rot', None)
+
         # ── Initialize MCC (same as run_policy.py main()) ────────────────
         mcc_root = os.environ.get('MCC_ROOT', '/opt/mcc')
         os.chdir(mcc_root)
@@ -79,6 +85,19 @@ class LeapComplianceNode:
         )
         rospy.loginfo("Loading gin config: %s", gin_file)
         gin.parse_config_file(gin_file, skip_unknown=True)
+
+        if kp_pos_override is not None:
+            gin.bind_parameter('ComplianceConfig.kp_pos', float(kp_pos_override))
+            rospy.loginfo(
+                "[LeapComplianceNode] ComplianceConfig.kp_pos overridden: %.3f",
+                float(kp_pos_override),
+            )
+        if kp_rot_override is not None:
+            gin.bind_parameter('ComplianceConfig.kp_rot', float(kp_rot_override))
+            rospy.loginfo(
+                "[LeapComplianceNode] ComplianceConfig.kp_rot overridden: %.3f",
+                float(kp_rot_override),
+            )
 
         motor_cfg_paths = MotorConfigPaths()
         default_cfg = os.path.join(mcc_root, str(motor_cfg_paths.default_config_path))
