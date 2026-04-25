@@ -26,6 +26,7 @@ import mujoco
 import rospy
 from geometry_msgs.msg import PoseArray, Vector3Stamped, WrenchStamped
 from sensor_msgs.msg import JointState
+from std_msgs.msg import Float64MultiArray
 from visualization_msgs.msg import Marker, MarkerArray
 
 # ── MCC imports ──────────────────────────────────────────────────────────────
@@ -60,6 +61,12 @@ class LeapComplianceNode:
             '~cartesian_cmd_topic', 'cmd_leap_cartesian'
         )
         self.gravity_topic = rospy.get_param('~gravity_topic', 'mcc_gravity')
+        self.force_cmd_topic = rospy.get_param(
+            '~force_cmd_topic', 'mcc_force_cmd'
+        )
+        self.stiffness_cmd_topic = rospy.get_param(
+            '~stiffness_cmd_topic', 'mcc_stiffness_cmd'
+        )
         self.publish_debug_markers = bool(
             rospy.get_param('~publish_debug_markers', False)
         )
@@ -162,6 +169,9 @@ class LeapComplianceNode:
         self.live_gravity = None
         self._pending_qpos_cmd = None
         self._pending_cartesian_cmd = None
+        self._pending_force_cmd = None
+        self._pending_stiffness_cmd = None
+        self.num_sites = len(self.policy.controller.config.site_names)
 
         if self.cmd_mode == 'cartesian':
             rospy.Subscriber(
@@ -184,6 +194,22 @@ class LeapComplianceNode:
             self.gravity_topic, Vector3Stamped, self._on_gravity, queue_size=1
         )
         rospy.loginfo("Listening for gravity on '%s'", self.gravity_topic)
+        rospy.Subscriber(
+            self.force_cmd_topic, Float64MultiArray,
+            self._on_force_cmd, queue_size=1,
+        )
+        rospy.loginfo(
+            "Listening for force commands on '%s' (Float64MultiArray, %d values)",
+            self.force_cmd_topic, self.num_sites * 6,
+        )
+        rospy.Subscriber(
+            self.stiffness_cmd_topic, Float64MultiArray,
+            self._on_stiffness_cmd, queue_size=1,
+        )
+        rospy.loginfo(
+            "Listening for stiffness commands on '%s' (Float64MultiArray, %d values)",
+            self.stiffness_cmd_topic, self.num_sites,
+        )
         self.state_pub = rospy.Publisher(self.state_topic, JointState, queue_size=10)
         self.gravity_pub = rospy.Publisher(
             'mcc_debug/gravity', Vector3Stamped, queue_size=1
@@ -225,6 +251,31 @@ class LeapComplianceNode:
             self.live_gravity = np.array(
                 [msg.vector.x, msg.vector.y, msg.vector.z], dtype=np.float32
             )
+
+    def _on_force_cmd(self, msg):
+        """Per-finger wrench command: [fx,fy,fz,tx,ty,tz] x num_sites."""
+        data = np.asarray(msg.data, dtype=np.float32)
+        expected = self.num_sites * 6
+        if data.shape[0] != expected:
+            rospy.logwarn_throttle(
+                1.0, "force_cmd: expected %d values, got %d",
+                expected, data.shape[0],
+            )
+            return
+        with self.lock:
+            self._pending_force_cmd = data.reshape(self.num_sites, 6)
+
+    def _on_stiffness_cmd(self, msg):
+        """Per-finger scalar position stiffness: [kp_0, kp_1, ..., kp_N]."""
+        data = np.asarray(msg.data, dtype=np.float32)
+        if data.shape[0] != self.num_sites:
+            rospy.logwarn_throttle(
+                1.0, "stiffness_cmd: expected %d values, got %d",
+                self.num_sites, data.shape[0],
+            )
+            return
+        with self.lock:
+            self._pending_stiffness_cmd = data
 
     def _apply_gravity(self):
         with self.lock:
@@ -295,8 +346,12 @@ class LeapComplianceNode:
         with self.lock:
             qpos_cmd = self._pending_qpos_cmd
             cartesian_cmd = self._pending_cartesian_cmd
+            force_cmd = self._pending_force_cmd
+            stiffness_cmd = self._pending_stiffness_cmd
             self._pending_qpos_cmd = None
             self._pending_cartesian_cmd = None
+            self._pending_force_cmd = None
+            self._pending_stiffness_cmd = None
 
         if qpos_cmd is not None:
             self.policy.controller.sync_qpos(qpos_cmd)
@@ -313,6 +368,21 @@ class LeapComplianceNode:
                     x_target[i, 3:6] = R.from_quat(ori).as_rotvec().astype(np.float32)
             self.policy.pose_command = x_target.copy()
             self.policy.base_pose_command = x_target.copy()
+
+        if force_cmd is not None:
+            self.policy.wrench_command[:] = force_cmd
+
+        if stiffness_cmd is not None:
+            mass = float(self.policy.mass)
+            for i in range(self.num_sites):
+                kp = float(stiffness_cmd[i])
+                self.policy.pos_stiffness[i] = (
+                    np.eye(3, dtype=np.float32) * kp
+                ).reshape(9)
+                kd = 2.0 * np.sqrt(mass * kp)
+                self.policy.pos_damping[i] = (
+                    np.eye(3, dtype=np.float32) * kd
+                ).reshape(9)
 
     def _control_loop(self):
         """Main loop — identical to run_policy.py's run_policy()."""
