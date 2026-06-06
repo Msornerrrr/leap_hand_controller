@@ -51,6 +51,7 @@ class LeapNode:
         self.kD = float(rospy.get_param('~kD', 200.0))
         self.curr_lim = float(rospy.get_param('~curr_lim', 550.0)) #don't go past 600ma on this, or it'll overcurrent sometimes for regular, 350ma for lite.
         self.max_delta_q = float(rospy.get_param('~max_delta_q', 0.15)) # Max joint position change per step (radians). Set to 0 to disable.
+        self.init_ramp_duration = float(rospy.get_param('~init_ramp_duration', 3.0)) # Smoothly ramp to the initial pose over this many seconds. Set to 0 for an immediate one-shot write.
         self.hand = rospy.get_param('~hand', 'right')
         self.cmd_topic = str(rospy.get_param("~cmd_topic", "cmd_leap")).strip()
         self.state_topic = str(rospy.get_param("~state_topic", "state")).strip()
@@ -110,10 +111,10 @@ class LeapNode:
 
         # Get Min and max
         self.min, self.max = lhu.LEAP_limits(self.hand)
-        try: 
-            #Move motors to 0 position
+        try:
+            #Smoothly ramp from the hand's current pose to the 0 position
             self.set_initial_position(self.curr_pos)
-            time.sleep(1.0) # Wait before reading positions
+            time.sleep(0.5) # Brief settle after the ramp before reading positions
 
             # Read initial state from hardware after delay
             output = self.dxl_client.read_pos_vel()
@@ -176,11 +177,37 @@ class LeapNode:
             self.cmd_pose = pose
 
 
-    def set_initial_position(self, pose):
-        """Set initial position. Direct write since control_loop hasn't started yet."""
-        self.cmd_pose = np.clip(pose, self.min, self.max)
-        self.curr_pos = self.cmd_pose + np.pi
-        self.dxl_client.write_desired_pos(self.motors, self.curr_pos)
+    def set_initial_position(self, pose, duration=None):
+        """Smoothly ramp from the hand's current pose to ``pose``.
+
+        Runs synchronously before the control_loop thread starts, so it owns the
+        bus exclusively. Linearly interpolates in raw motor space from the
+        actual measured position to the target over ``duration`` seconds at the
+        control frequency. ``duration`` <= 0 falls back to a single one-shot
+        write (the original behavior).
+        """
+        duration = self.init_ramp_duration if duration is None else duration
+        target = np.clip(pose, self.min, self.max)
+        target_raw = target + np.pi
+        self.cmd_pose = target
+
+        if duration <= 0.0:
+            self.curr_pos = target_raw
+            self.dxl_client.write_desired_pos(self.motors, self.curr_pos)
+            return
+
+        # Where the hand actually is right now (raw motor space, includes pi offset).
+        start_raw, _ = self.dxl_client.read_pos_vel()
+        n_steps = max(int(duration * self.frequency), 1)
+        rospy.loginfo(f"Ramping to initial position over {duration:.1f}s ({n_steps} steps)")
+        rate = rospy.Rate(self.frequency)
+        for i in range(1, n_steps + 1):
+            if rospy.is_shutdown():
+                break
+            alpha = i / n_steps
+            self.curr_pos = (1.0 - alpha) * start_raw + alpha * target_raw
+            self.dxl_client.write_desired_pos(self.motors, self.curr_pos)
+            rate.sleep()
 
 
     #Service that reads and returns the pos of the robot in regular LEAP Embodiment scaling.

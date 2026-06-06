@@ -8,6 +8,7 @@
     <arg name="kI" default="0.0" />
     <arg name="kD" default="200.0" />
     <arg name="curr_lim" default="550.0" />
+    <arg name="init_ramp_duration" default="3.0" doc="Seconds to smoothly ramp to the initial pose at startup. 0 = immediate one-shot write." />
     <arg name="cmd_topic" default="cmd_leap" />
     <arg name="state_topic" default="state" />
     <arg name="show_rviz" default="false" />
@@ -23,6 +24,7 @@
             <param name="kI" value="$(arg kI)"/>
             <param name="kD" value="$(arg kD)"/>
             <param name="curr_lim" value="$(arg curr_lim)"/>
+            <param name="init_ramp_duration" value="$(arg init_ramp_duration)"/>
             <param name="hand" value="$(arg hand)"/>
             <param name="cmd_topic" value="$(arg cmd_topic)"/>
             <param name="state_topic" value="$(arg state_topic)"/>
